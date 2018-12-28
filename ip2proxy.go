@@ -303,96 +303,25 @@ func DatabaseVersion() string {
 	return "20" + strconv.Itoa(int(meta.databaseyear)) + "." + strconv.Itoa(int(meta.databasemonth)) + "." + strconv.Itoa(int(meta.databaseday))
 }
 
-// populate record with message
-func loadmessage(mesg string) IP2Proxyrecord {
-	var x IP2Proxyrecord
-
-	x.Country_short = mesg
-	x.Country_long = mesg
-	x.Region = mesg
-	x.City = mesg
-	x.Isp = mesg
-	x.Proxy_type = mesg
-	x.Is_proxy = -1
-
-	return x
-}
-
 // get all fields
-func GetAll(ipaddress string) map[string]string {
-	data := query(ipaddress, all)
-
-	var x = make(map[string]string)
-	s := strconv.Itoa(int(data.Is_proxy))
-	x["isProxy"] = s
-	x["ProxyType"] = data.Proxy_type
-	x["CountryShort"] = data.Country_short
-	x["CountryLong"] = data.Country_long
-	x["Region"] = data.Region
-	x["City"] = data.City
-	x["ISP"] = data.Isp
-
-	return x
-}
-
-// get country code
-func GetCountryShort(ipaddress string) string {
-	data := query(ipaddress, countryshort)
-	return data.Country_short
-}
-
-// get country name
-func GetCountryLong(ipaddress string) string {
-	data := query(ipaddress, countrylong)
-	return data.Country_long
-}
-
-// get region
-func GetRegion(ipaddress string) string {
-	data := query(ipaddress, region)
-	return data.Region
-}
-
-// get city
-func GetCity(ipaddress string) string {
-	data := query(ipaddress, city)
-	return data.City
-}
-
-// get isp
-func GetIsp(ipaddress string) string {
-	data := query(ipaddress, isp)
-	return data.Isp
-}
-
-// get proxy type
-func GetProxyType(ipaddress string) string {
-	data := query(ipaddress, proxytype)
-	return data.Proxy_type
-}
-
-// is proxy
-func IsProxy(ipaddress string) int8 {
-	data := query(ipaddress, isproxy)
-	return data.Is_proxy
+func GetAll(ipaddress string) (IP2Proxyrecord, error) {
+	return query(ipaddress, all)
 }
 
 // main query
-func query(ipaddress string, mode uint32) IP2Proxyrecord {
-	x := loadmessage(msg_not_supported) // default message
+func query(ipaddress string, mode uint32) (IP2Proxyrecord, error) {
+	var x IP2Proxyrecord
 
 	// read metadata
 	if !metaok {
-		x = loadmessage(msg_missing_file)
-		return x
+		return x, fmt.Errorf(msg_missing_file)
 	}
 
 	// check IP type and return IP number & index (if exists)
 	iptype, ipno, ipindex := checkip(ipaddress)
 
 	if iptype == 0 {
-		x = loadmessage(msg_invalid_ip)
-		return x
+		return x, fmt.Errorf(msg_invalid_ip)
 	}
 
 	var colsize uint32
@@ -414,8 +343,7 @@ func query(ipaddress string, mode uint32) IP2Proxyrecord {
 		colsize = meta.ipv4columnsize
 	} else {
 		if meta.ipv6databasecount == 0 {
-			x = loadmessage(msg_ipv6_unsupported)
-			return x
+			return x, fmt.Errorf(msg_ipv6_unsupported)
 		}
 		baseaddr = meta.ipv6databaseaddr
 		high = meta.ipv6databasecount
@@ -491,7 +419,7 @@ func query(ipaddress string, mode uint32) IP2Proxyrecord {
 				}
 			}
 
-			return x
+			return x, nil
 		} else {
 			if ipno.Cmp(ipfrom) < 0 {
 				high = mid - 1
@@ -500,7 +428,8 @@ func query(ipaddress string, mode uint32) IP2Proxyrecord {
 			}
 		}
 	}
-	return x
+
+	return x, fmt.Errorf(msg_not_supported)
 }
 
 // for debugging purposes
