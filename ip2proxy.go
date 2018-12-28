@@ -34,6 +34,8 @@ type IP2Proxyrecord struct {
 	Isp           string
 	Proxy_type    string
 	Is_proxy      int8
+	IPFrom        int64
+	IPTo          int64
 }
 
 var f *os.File
@@ -418,6 +420,9 @@ func query(ipaddress string, mode uint32) (IP2Proxyrecord, error) {
 					x.Is_proxy = 1
 				}
 			}
+
+			x.IPFrom = ipfrom.Int64()
+			x.IPTo = ipto.Int64()
 
 			return x, nil
 		} else {
