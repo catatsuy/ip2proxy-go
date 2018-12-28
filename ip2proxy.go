@@ -67,6 +67,8 @@ const msg_invalid_ip string = "INVALID IP ADDRESS"
 const msg_missing_file string = "MISSING FILE"
 const msg_ipv6_unsupported string = "IPV6 ADDRESS MISSING IN IPV4 BIN"
 
+var ErrNotSupported = fmt.Errorf(msg_not_supported)
+
 var metaok bool
 
 var country_position_offset uint32
@@ -434,7 +436,7 @@ func query(ipaddress string, mode uint32) (IP2Proxyrecord, error) {
 		}
 	}
 
-	return x, fmt.Errorf(msg_not_supported)
+	return x, ErrNotSupported
 }
 
 // for debugging purposes
