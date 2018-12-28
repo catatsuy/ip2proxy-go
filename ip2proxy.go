@@ -202,15 +202,13 @@ func readfloat(pos uint32) float32 {
 }
 
 // initialize the component with the database path
-func Open(dbpath string) int8 {
-	Close() // reset in case user didn't call Close() before calling Open() again
-
+func Open(dbpath string) error {
 	max_ipv6_range.SetString("340282366920938463463374607431768211455", 10)
 
 	var err error
 	f, err = os.Open(dbpath)
 	if err != nil {
-		return -1
+		return err
 	}
 
 	meta.databasetype = readuint8(1)
@@ -252,11 +250,11 @@ func Open(dbpath string) int8 {
 	}
 
 	metaok = true
-	return 0
+	return nil
 }
 
 // close database file handle & reset
-func Close() int8 {
+func Close() error {
 	meta.databasetype = 0
 	meta.databasecolumn = 0
 	meta.databaseyear = 0
@@ -284,10 +282,10 @@ func Close() int8 {
 
 	err := f.Close()
 	if err != nil {
-		return -1
-	} else {
-		return 0
+		return err
 	}
+
+	return nil
 }
 
 // get module version
