@@ -33,6 +33,11 @@ type IP2Proxyrecord struct {
 	City          string
 	Isp           string
 	Proxy_type    string
+	Domain        string
+	Usage_type    string
+	Asn           string
+	As            string
+	Last_seen     string
 	Is_proxy      int8
 	IPFrom        int64
 	IPTo          int64
@@ -41,16 +46,28 @@ type IP2Proxyrecord struct {
 var f *os.File
 var meta ip2proxymeta
 
-var country_position = [5]uint8{0, 2, 3, 3, 3}
-var region_position = [5]uint8{0, 0, 0, 4, 4}
-var city_position = [5]uint8{0, 0, 0, 5, 5}
-var isp_position = [5]uint8{0, 0, 0, 0, 6}
-var proxytype_position = [5]uint8{0, 0, 2, 2, 2}
+var country_position = [9]uint8{0, 2, 3, 3, 3, 3, 3, 3, 3}
+var region_position = [9]uint8{0, 0, 0, 4, 4, 4, 4, 4, 4}
+var city_position = [9]uint8{0, 0, 0, 5, 5, 5, 5, 5, 5}
+var isp_position = [9]uint8{0, 0, 0, 0, 6, 6, 6, 6, 6}
+var proxytype_position = [9]uint8{0, 0, 2, 2, 2, 2, 2, 2, 2}
+var domain_position = [9]uint8{0, 0, 0, 0, 0, 7, 7, 7, 7}
+var usagetype_position = [9]uint8{0, 0, 0, 0, 0, 0, 8, 8, 8}
+var asn_position = [9]uint8{0, 0, 0, 0, 0, 0, 0, 9, 9}
+var as_position = [9]uint8{0, 0, 0, 0, 0, 0, 0, 10, 10}
+var lastseen_position = [9]uint8{0, 0, 0, 0, 0, 0, 0, 0, 11}
 
-const module_version string = "1.0.0"
+const module_version string = "2.1.0"
 
 var max_ipv4_range = big.NewInt(4294967295)
 var max_ipv6_range = big.NewInt(0)
+var from_v4mapped = big.NewInt(281470681743360)
+var to_v4mapped = big.NewInt(281474976710655)
+var from_6to4 = big.NewInt(0)
+var to_6to4 = big.NewInt(0)
+var from_teredo = big.NewInt(0)
+var to_teredo = big.NewInt(0)
+var last_32bits = big.NewInt(4294967295)
 
 const countryshort uint32 = 0x00001
 const countrylong uint32 = 0x00002
@@ -59,8 +76,13 @@ const city uint32 = 0x00008
 const isp uint32 = 0x00010
 const proxytype uint32 = 0x00020
 const isproxy uint32 = 0x00040
+const domain uint32 = 0x00080
+const usagetype uint32 = 0x00100
+const asn uint32 = 0x00200
+const as uint32 = 0x00400
+const lastseen uint32 = 0x00800
 
-const all uint32 = countryshort | countrylong | region | city | isp | proxytype | isproxy
+const all uint32 = countryshort | countrylong | region | city | isp | proxytype | isproxy | domain | usagetype | asn | as | lastseen
 
 const msg_not_supported string = "NOT SUPPORTED"
 const msg_invalid_ip string = "INVALID IP ADDRESS"
@@ -76,12 +98,22 @@ var region_position_offset uint32
 var city_position_offset uint32
 var isp_position_offset uint32
 var proxytype_position_offset uint32
+var domain_position_offset uint32
+var usagetype_position_offset uint32
+var asn_position_offset uint32
+var as_position_offset uint32
+var lastseen_position_offset uint32
 
 var country_enabled bool
 var region_enabled bool
 var city_enabled bool
 var isp_enabled bool
 var proxytype_enabled bool
+var domain_enabled bool
+var usagetype_enabled bool
+var asn_enabled bool
+var as_enabled bool
+var lastseen_enabled bool
 
 // get IP type and calculate IP number; calculates index too if exists
 func checkip(ip string) (iptype uint32, ipnum *big.Int, ipindex uint32) {
@@ -103,6 +135,22 @@ func checkip(ip string) (iptype uint32, ipnum *big.Int, ipindex uint32) {
 			if v6 != nil {
 				iptype = 6
 				ipnum.SetBytes(v6)
+
+				if ipnum.Cmp(from_v4mapped) >= 0 && ipnum.Cmp(to_v4mapped) <= 0 {
+					// ipv4-mapped ipv6 should treat as ipv4 and read ipv4 data section
+					iptype = 4
+					ipnum.Sub(ipnum, from_v4mapped)
+				} else if ipnum.Cmp(from_6to4) >= 0 && ipnum.Cmp(to_6to4) <= 0 {
+					// 6to4 so need to remap to ipv4
+					iptype = 4
+					ipnum.Rsh(ipnum, 80)
+					ipnum.And(ipnum, last_32bits)
+				} else if ipnum.Cmp(from_teredo) >= 0 && ipnum.Cmp(to_teredo) <= 0 {
+					// Teredo so need to remap to ipv4
+					iptype = 4
+					ipnum.Not(ipnum)
+					ipnum.And(ipnum, last_32bits)
+				}
 			}
 		}
 	}
@@ -208,6 +256,10 @@ func readfloat(pos uint32) float32 {
 // initialize the component with the database path
 func Open(dbpath string) error {
 	max_ipv6_range.SetString("340282366920938463463374607431768211455", 10)
+	from_6to4.SetString("42545680458834377588178886921629466624", 10)
+	to_6to4.SetString("42550872755692912415807417417958686719", 10)
+	from_teredo.SetString("42540488161975842760550356425300246528", 10)
+	to_teredo.SetString("42540488241204005274814694018844196863", 10)
 
 	var err error
 	f, err = os.Open(dbpath)
@@ -252,6 +304,26 @@ func Open(dbpath string) error {
 		proxytype_position_offset = uint32(proxytype_position[dbt]-1) << 2
 		proxytype_enabled = true
 	}
+	if domain_position[dbt] != 0 {
+		domain_position_offset = uint32(domain_position[dbt]-1) << 2
+		domain_enabled = true
+	}
+	if usagetype_position[dbt] != 0 {
+		usagetype_position_offset = uint32(usagetype_position[dbt]-1) << 2
+		usagetype_enabled = true
+	}
+	if asn_position[dbt] != 0 {
+		asn_position_offset = uint32(asn_position[dbt]-1) << 2
+		asn_enabled = true
+	}
+	if as_position[dbt] != 0 {
+		as_position_offset = uint32(as_position[dbt]-1) << 2
+		as_enabled = true
+	}
+	if lastseen_position[dbt] != 0 {
+		lastseen_position_offset = uint32(lastseen_position[dbt]-1) << 2
+		lastseen_enabled = true
+	}
 
 	metaok = true
 	return nil
@@ -278,11 +350,21 @@ func Close() error {
 	city_position_offset = 0
 	isp_position_offset = 0
 	proxytype_position_offset = 0
+	domain_position_offset = 0
+	usagetype_position_offset = 0
+	asn_position_offset = 0
+	as_position_offset = 0
+	lastseen_position_offset = 0
 	country_enabled = false
 	region_enabled = false
 	city_enabled = false
 	isp_enabled = false
 	proxytype_enabled = false
+	domain_enabled = false
+	usagetype_enabled = false
+	asn_enabled = false
+	as_enabled = false
+	lastseen_enabled = false
 
 	err := f.Close()
 	if err != nil {
@@ -362,7 +444,7 @@ func query(ipaddress string, mode uint32) (IP2Proxyrecord, error) {
 	}
 
 	if ipno.Cmp(maxip) >= 0 {
-		ipno = ipno.Sub(ipno, big.NewInt(1))
+		ipno.Sub(ipno, big.NewInt(1))
 	}
 
 	for low <= high {
@@ -413,10 +495,30 @@ func query(ipaddress string, mode uint32) (IP2Proxyrecord, error) {
 				x.Isp = readstr(readuint32(rowoffset + isp_position_offset))
 			}
 
+			if mode&domain != 0 && domain_enabled {
+				x.Domain = readstr(readuint32(rowoffset + domain_position_offset))
+			}
+
+			if mode&usagetype != 0 && usagetype_enabled {
+				x.Usage_type = readstr(readuint32(rowoffset + usagetype_position_offset))
+			}
+
+			if mode&asn != 0 && asn_enabled {
+				x.Asn = readstr(readuint32(rowoffset + asn_position_offset))
+			}
+
+			if mode&as != 0 && as_enabled {
+				x.As = readstr(readuint32(rowoffset + as_position_offset))
+			}
+
+			if mode&lastseen != 0 && lastseen_enabled {
+				x.Last_seen = readstr(readuint32(rowoffset + lastseen_position_offset))
+			}
+
 			if x.Country_short == "-" || x.Proxy_type == "-" {
 				x.Is_proxy = 0
 			} else {
-				if x.Proxy_type == "DCH" {
+				if x.Proxy_type == "DCH" || x.Proxy_type == "SES" {
 					x.Is_proxy = 2
 				} else {
 					x.Is_proxy = 1
@@ -447,5 +549,10 @@ func Printrecord(x IP2Proxyrecord) {
 	fmt.Printf("city: %s\n", x.City)
 	fmt.Printf("isp: %s\n", x.Isp)
 	fmt.Printf("proxy_type: %s\n", x.Proxy_type)
+	fmt.Printf("domain: %s\n", x.Domain)
+	fmt.Printf("usage_type: %s\n", x.Usage_type)
+	fmt.Printf("asn: %s\n", x.Asn)
+	fmt.Printf("as: %s\n", x.As)
+	fmt.Printf("last_seen: %s\n", x.Last_seen)
 	fmt.Printf("is_proxy: %d\n", x.Is_proxy)
 }
